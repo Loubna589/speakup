@@ -230,7 +230,7 @@ function genPrompt(w, n, known) {
   const counts = allocate(n);
   return `Tu prépares la semaine ${w} d'une application de cartes (type Quizlet) pour une Française qui travaille dans le marketing pharmaceutique / medtech (ophtalmologie, lancements de produits, market access). Elle travaille en anglais avec les filiales du Royaume-Uni, d'Espagne et des Pays-Bas. Son objectif : comprendre et parler spontanément en réunion (niveau B1-B2), pas l'écrit.
 
-Écris exactement ${n} NOUVELLES expressions anglaises utiles à l'oral, réparties ainsi :
+Écris exactement ${n} NOUVELLES cartes : environ 40 % de MOTS ou termes clés (ex. « reimbursement », « stakeholder », « lead time », « to roll out ») et 60 % d'EXPRESSIONS utiles à l'oral, pour qu'elle se débrouille en réunion, en marketing et en market access. Répartition :
 - "general" (fluidité, expressions « béquilles » pour gagner du temps, small talk, visio) : ${counts.general}
 - "meetings" (réunions, vérifier sa compréhension, organiser, répartir les tâches) : ${counts.meetings}
 - "persuade" (argumenter, nuancer, négocier, défendre une idée face à quelqu'un de plus à l'aise) : ${counts.persuade}
@@ -238,7 +238,7 @@ function genPrompt(w, n, known) {
 - "access" (market access, remboursement, prix, HTA, payeurs) : ${counts.access}
 
 Règles :
-- Anglais naturel et idiomatique, tel qu'on le dit vraiment en réunion ; une expression = une phrase courte ou un début de phrase (avec « … » si elle se complète).
+- Anglais naturel et idiomatique, tel qu'on le dit vraiment en réunion ; une expression = une phrase courte ou un début de phrase (avec « … » si elle se complète) ; un mot = le terme seul (verbe précédé de « to »), avec sa traduction française la plus utile dans son métier.
 - Le français est une traduction naturelle (tutoiement, au féminin si la locutrice parle d'elle).
 - Progression : semaine ${w}, donc des expressions de plus en plus riches et variées.
 - N'utilise AUCUNE des expressions déjà apprises ci-dessous, ni une quasi-répétition.
