@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Speak Up — anglais oral pro</title>
+<link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#1f2328">
+</head>
+<body>
+<header class="top">
+  <div class="brand">Speak&nbsp;Up <span>anglais oral pro</span> <span id="syncState"></span></div>
+  <button id="goalChip" class="goal-chip" title="Objectif du jour"></button>
+  <nav id="tabs">
+    <button data-view="cards">🃏 Cartes</button>
+    <button data-view="review">🔁 Réviser <span class="badge" id="revBadge" hidden></span></button>
+    <button data-view="home">🎯 Séance orale</button>
+    <button data-view="listen">🎧 Dialogues</button>
+    <button data-view="quick">⚡ Réponse rapide</button>
+    <button data-view="expr">📚 Expressions</button>
+    <button data-view="settings">⚙️ Réglages</button>
+  </nav>
+</header>
+<main id="view"></main>
+<div id="toast" hidden></div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
