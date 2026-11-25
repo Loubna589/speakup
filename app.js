@@ -290,11 +290,13 @@ let VOICES = [];
 const loadVoices = () => { VOICES = speechSynthesis.getVoices(); };
 if ('speechSynthesis' in window) { loadVoices(); speechSynthesis.onvoiceschanged = () => { loadVoices(); if (route.view === 'settings' || route.view === 'home') render(); }; }
 
-const FEMALE = /\b(female|woman|zira|hazel|susan|libby|sonia|maisie|jenny|aria|ana|emily|natasha|neerja|leah|clara|elvira|ximena|dalia|paloma|fenna|colette|hanna|helena|laura|sabina|karen|moira|tessa|samantha|catherine|veena|heera|serena|fiona|kate|nicky|ava|allison|lekha|ellen|michelle|sara|monica|paulina)\b/i;
+const FEMALE = /\b(female|woman|zira|hazel|susan|libby|sonia|maisie|jenny|aria|ana|emily|natasha|neerja|leah|clara|elvira|ximena|dalia|paloma|fenna|colette|hanna|helena|laura|sabina|karen|moira|tessa|samantha|catherine|veena|heera|serena|fiona|kate|nicky|ava|allison|lekha|ellen|michelle|sara|monica|paulina|martha|zoe|victoria|stephanie|kathy|libby|isha|sonia|maisie|olivia|emma|amy|joanna|salli|kimberly|ivy|kendra)\b/i;
 const MALE = /\b(male|man|ryan|guy|thomas|william|connor|prabhat|alvaro|álvaro|jorge|maarten|arnaud|david|mark|george|james|eric|christopher|roger|steffan|brian|liam|daniel|alex|fred|tom|ravi|rishi|oliver|pablo|raul|frank|luca|darren|duncan|elliot|noah|andrew)\b/i;
 function guessGender(v) { const n = v.name; if (/female/i.test(n)) return 'f'; if (/\bmale\b/i.test(n)) return 'm'; if (FEMALE.test(n)) return 'f'; if (MALE.test(n)) return 'm'; return '?'; }
-function voiceScore(v) { const n = v.name; return (/natural|neural/i.test(n) ? 4 : 0) + (/online/i.test(n) ? 2 : 0) + (/google/i.test(n) ? 1 : 0); }
-const byLang = l => VOICES.filter(v => v.lang.replace('_', '-').toLowerCase().startsWith(l.toLowerCase()));
+function voiceScore(v) { const n = v.name; return (/natural|neural|premium/i.test(n) ? 4 : 0) + (/enhanced|online/i.test(n) ? 2 : 0) + (/google/i.test(n) ? 1 : 0); }
+// Voix « gadget » d'Apple (robot, chuchotement, cloches…) : jamais utilisées
+const NOVELTY = /\b(albert|bad news|bahh|bells|boing|bubbles|cellos|wobble|good news|jester|organ|superstar|trinoids|whisper|zarvox|junior|ralph|fred|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley|deranged|hysterical|pipe organ)\b/i;
+const byLang = l => VOICES.filter(v => v.lang.replace('_', '-').toLowerCase().startsWith(l.toLowerCase()) && !NOVELTY.test(v.name));
 
 function resolveAccent(accent) {
   const a = ACCENTS[accent] || ACCENTS['en-GB'];
@@ -307,6 +309,8 @@ function resolveAccent(accent) {
 function pickVoice(accent, g, idx = 0) {
   const r = resolveAccent(accent);
   let pool = r.voices;
+  const pref = S.settings.voiceGender || 'f';
+  if (pref !== 'mix') g = pref;
   if (g) { const same = pool.filter(v => guessGender(v) === g); if (same.length) pool = same; }
   return { voice: pool.length ? pool[idx % pool.length] : null, real: r.real };
 }
@@ -319,7 +323,7 @@ const TTS_VOICES = ['buttery', 'rounded', 'airy', 'glassy'];
 function speak(text, { accent = 'en-GB', rate = 1, g, idx = 0, pitch = 1, voiceN = 0 } = {}) {
   const clean = stripMarks(text);
   if (ttsCap && S.settings.claudeVoice !== false) {
-    return ttsCap.speak(clean, { language: 'en', voice: TTS_VOICES[voiceN % TTS_VOICES.length], rate: Math.max(0.7, Math.min(1.5, rate)) }).catch(() => {});
+    return ttsCap.speak(clean, { language: 'en', voice: (S.settings.voiceGender || 'f') === 'mix' ? TTS_VOICES[voiceN % TTS_VOICES.length] : ['buttery', 'airy', 'glassy'][voiceN % 3], rate: Math.max(0.7, Math.min(1.5, rate)) }).catch(() => {});
   }
   return new Promise(res => {
     if (!('speechSynthesis' in window)) return res();
@@ -887,6 +891,9 @@ function viewSettings(v) {
     <div class="card"><h3>Voix et accents</h3>
       <p class="small muted">Les voix dépendent du navigateur et de Windows. <b>Microsoft Edge</b> propose le plus de voix « Natural » (dont irlandaise, australienne, indienne, espagnole et néerlandaise). Pour l'anglais parlé par des Espagnols ou des Néerlandais, l'app fait lire le texte anglais par une voix espagnole ou néerlandaise : c'est une approximation de l'accent.</p>
       <label class="small"><input type="checkbox" id="cv" ${st.claudeVoice !== false ? 'checked' : ''}> Voix de Claude (naturelle, sur la version en ligne : ${ttsCap ? 'disponible ✓' : 'non disponible ici'})</label><br>
+      <div class="row" style="margin-bottom:8px"><label>Voix :</label><select id="vg"><option value="f" ${(st.voiceGender || 'f') === 'f' ? 'selected' : ''}>Voix de femmes uniquement</option><option value="mix" ${st.voiceGender === 'mix' ? 'selected' : ''}>Femmes et hommes (dialogues)</option><option value="m" ${st.voiceGender === 'm' ? 'selected' : ''}>Voix d'hommes uniquement</option></select>
+        <button class="btn small" data-say="Hello! Just to make sure I understand, you'd like to move the launch to March?" data-accent="en-GB">▶ Tester</button></div>
+      <p class="small muted" style="margin:0 0 8px">Sur iPhone, pour une voix plus naturelle : Réglages → Accessibilité → Contenu énoncé → Voix → Anglais, puis télécharge une voix « améliorée » (par ex. Serena ou Kate).</p>
       <label class="small"><input type="checkbox" id="auto" ${st.autoVoice ? 'checked' : ''}> Lecture automatique (sinon la voix ne parle que quand tu cliques sur 🔊)</label><br>
       <label class="small"><input type="checkbox" id="av" ${st.accentVoices ? 'checked' : ''}> Utiliser les voix espagnoles et néerlandaises pour l'anglais accentué (qualité souvent médiocre)</label>
       <table style="margin-top:10px"><tr><th>Accent</th><th>Voix utilisée</th><th></th></tr>${voiceRows}</table>
@@ -901,6 +908,7 @@ function viewSettings(v) {
   $('#tm').oninput = e => { st.timer = Number(e.target.value); $('#tv').textContent = st.timer + ' s'; save(); };
   $('#lg').onchange = e => { st.sitLang = e.target.value; save(); };
   $('#cv').onchange = e => { st.claudeVoice = e.target.checked; save(); };
+  $('#vg').onchange = e => { st.voiceGender = e.target.value; save(); render(); };
   $('#auto').onchange = e => { st.autoVoice = e.target.checked; save(); };
   $('#av').onchange =e => { st.accentVoices = e.target.checked; save(); render(); };
   $('#rl').onchange = e => { st.recogLang = e.target.value; save(); };
