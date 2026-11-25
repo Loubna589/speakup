@@ -279,7 +279,7 @@ function weekGenCard(box, w, after) {
     <p class="small muted" id="genMsg"></p>
     <p class="small muted">En attendant, l'onglet <b>🔁 Réviser</b> te fait retravailler toutes les semaines précédentes.</p></div>`;
   const btn = $('#genBtn', box), msg = $('#genMsg', box);
-  sampleReady.then(fn => { if (!fn) { btn.disabled = true; msg.textContent = 'La préparation des nouvelles semaines fonctionne sur la version en ligne de l’app (le lien claude.ai). Ouvre-la pour générer la semaine ' + w + '.'; } });
+  sampleReady.then(fn => { if (!fn) { btn.hidden = true; msg.innerHTML = '📬 <b>Ta semaine ' + w + ' arrive automatiquement</b> : elle est publiée chaque mardi soir. Ouvre l’app avec internet pour la recevoir.'; } });
   btn.onclick = async () => {
     btn.disabled = true; msg.textContent = 'Claude prépare tes expressions… (1 à 2 minutes)';
     let n = 0;
@@ -1084,7 +1084,26 @@ function lev(a, b) {
   return m[a.length][b.length];
 }
 
+// ------------------------------------------- semaines publiées sur GitHub
+// Chaque semaine, une tâche automatique ajoute weeks/week-N.json au dépôt.
+// L'app (version installée) les télécharge dès qu'elle a internet, puis les garde hors ligne.
+async function loadPublishedWeeks() {
+  if (IN_FRAME || !/^https?:$/.test(location.protocol)) return;
+  try {
+    const idx = await (await fetch('weeks/index.json', { cache: 'no-store' })).json();
+    let added = 0;
+    for (const w of (idx.weeks || []).map(Number)) {
+      if (!w || (S.gen[w] && S.gen[w].length)) continue;
+      const data = await (await fetch(`weeks/week-${w}.json`, { cache: 'no-store' })).json();
+      const items = (data.items || []).filter(x => x && CATS[x.c] && typeof x.en === 'string' && typeof x.fr === 'string');
+      if (items.length) { S.gen[w] = items; added++; }
+    }
+    if (added) { rebuildExpr(); save(); if (!deckBusy()) render(); toast(added > 1 ? `${added} nouvelles semaines reçues` : 'Nouvelle semaine reçue 📬'); }
+  } catch {}
+}
+
 render();
+loadPublishedWeeks();
 updateGoalChip();
 document.getElementById('goalChip').onclick = () => go('review');
 initCloud();
