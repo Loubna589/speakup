@@ -4,7 +4,7 @@
 //  hors du navigateur à part la reconnaissance vocale du navigateur).
 // =====================================================================
 
-const BUILTIN_WEEKS = 3; // semaines fournies avec l'app ; les suivantes sont générées
+const BUILTIN_WEEKS = 1; // semaines fournies avec l'app (108 expressions) ; les suivantes sont générées
 const SPEEDS = [
   { k: 'slow',   label: 'Lent',   rate: 0.75 },
   { k: 'normal', label: 'Normal', rate: 1.0 },
@@ -62,7 +62,7 @@ if (!S.daily) S.daily = {};
 
 // ---------------------------------------------------- objectif quotidien & série
 // Chaque carte, question ou exercice compte pour 1 (un dialogue réussi compte pour 3).
-const goal = () => S.settings.dailyGoal || 20;
+const goal = () => S.settings.dailyGoal || 30;
 const doneToday = () => S.daily[todayISO()] || 0;
 function streak() {
   let k = todayISO(), n = 0;
@@ -224,14 +224,13 @@ async function initCloud() {
 // ------------------------------------------- génération des nouvelles semaines
 let sampleFn = null;
 const sampleReady = (async () => { try { if (window.claude && window.claude.use) sampleFn = await claude.use('sample'); } catch {} return sampleFn; })();
-const WEEK_SIZE = 36;
-async function generateWeek(w, onProgress) {
-  if (!sampleFn) throw { code: 'unavailable' };
-  const counts = allocate(WEEK_SIZE);
-  const known = EXPR.map(e => e.en).slice(-600).join('\n');
-  const prompt = `Tu prépares la semaine ${w} d'une application de cartes (type Quizlet) pour une Française qui travaille dans le marketing pharmaceutique / medtech (ophtalmologie, lancements de produits, market access). Elle travaille en anglais avec les filiales du Royaume-Uni, d'Espagne et des Pays-Bas. Son objectif : comprendre et parler spontanément en réunion (niveau B1-B2), pas l'écrit.
+const WEEK_SIZE = 100; // nouvelles expressions par semaine
+const PART = 50;       // demandées à Claude par lots de 50 (réponses plus fiables)
+function genPrompt(w, n, known) {
+  const counts = allocate(n);
+  return `Tu prépares la semaine ${w} d'une application de cartes (type Quizlet) pour une Française qui travaille dans le marketing pharmaceutique / medtech (ophtalmologie, lancements de produits, market access). Elle travaille en anglais avec les filiales du Royaume-Uni, d'Espagne et des Pays-Bas. Son objectif : comprendre et parler spontanément en réunion (niveau B1-B2), pas l'écrit.
 
-Écris exactement ${WEEK_SIZE} NOUVELLES expressions anglaises utiles à l'oral, réparties ainsi :
+Écris exactement ${n} NOUVELLES expressions anglaises utiles à l'oral, réparties ainsi :
 - "general" (fluidité, expressions « béquilles » pour gagner du temps, small talk, visio) : ${counts.general}
 - "meetings" (réunions, vérifier sa compréhension, organiser, répartir les tâches) : ${counts.meetings}
 - "persuade" (argumenter, nuancer, négocier, défendre une idée face à quelqu'un de plus à l'aise) : ${counts.persuade}
@@ -241,42 +240,51 @@ async function generateWeek(w, onProgress) {
 Règles :
 - Anglais naturel et idiomatique, tel qu'on le dit vraiment en réunion ; une expression = une phrase courte ou un début de phrase (avec « … » si elle se complète).
 - Le français est une traduction naturelle (tutoiement, au féminin si la locutrice parle d'elle).
-- Progression : semaine ${w}, donc des expressions un peu plus riches et variées que les bases.
+- Progression : semaine ${w}, donc des expressions de plus en plus riches et variées.
 - N'utilise AUCUNE des expressions déjà apprises ci-dessous, ni une quasi-répétition.
 - "t" vaut "crutch" pour une expression béquille, "check" pour vérifier sa compréhension, sinon omets-le.
 
 Réponds uniquement avec un tableau JSON d'objets {"c": "general|meetings|persuade|marketing|access", "en": "...", "fr": "...", "t": "crutch|check"}.
 
 Expressions déjà apprises :
-${known}`;
-  const data = await sampleFn.json(prompt, { cache: false, onText: onProgress });
-  if (!Array.isArray(data)) throw { code: 'invalid_json' };
-  const have = new Set(EXPR.map(e => e.id)), out = [];
-  for (const x of data) {
-    if (!x || typeof x.en !== 'string' || typeof x.fr !== 'string' || !CATS[x.c]) continue;
-    const en = x.en.trim().slice(0, 160), fr = x.fr.trim().slice(0, 200), id = norm(en);
-    if (!id || have.has(id)) continue;
-    have.add(id);
-    out.push({ c: x.c, en, fr, ...(x.t === 'crutch' || x.t === 'check' ? { t: x.t } : {}) });
+${known.slice(-700).join('\n')}`;
+}
+async function generateWeek(w, onCount) {
+  if (!sampleFn) throw { code: 'unavailable' };
+  const have = new Set(EXPR.map(e => e.id)), known = EXPR.map(e => e.en), out = [];
+  for (let done = 0; done < WEEK_SIZE; done += PART) {
+    const n = Math.min(PART, WEEK_SIZE - done), base = out.length;
+    let data;
+    try {
+      data = await sampleFn.json(genPrompt(w, n, known), { cache: false, onText: ({ text }) => onCount && onCount(base + (text.match(/"en"\s*:/g) || []).length) });
+    } catch (e) { if (out.length >= PART * 0.6) break; throw e; } // un lot déjà prêt : on garde ce qu'on a
+    if (!Array.isArray(data)) { if (out.length) break; throw { code: 'invalid_json' }; }
+    for (const x of data) {
+      if (!x || typeof x.en !== 'string' || typeof x.fr !== 'string' || !CATS[x.c]) continue;
+      const en = x.en.trim().slice(0, 160), fr = x.fr.trim().slice(0, 200), id = norm(en);
+      if (!id || have.has(id)) continue;
+      have.add(id); known.push(en);
+      out.push({ c: x.c, en, fr, ...(x.t === 'crutch' || x.t === 'check' ? { t: x.t } : {}) });
+    }
   }
-  if (out.length < 15) throw { code: 'too_few' };
+  if (out.length < 30) throw { code: 'too_few' };
   S.gen[w] = out; rebuildExpr(); save(); pushWeek(w);
   return out;
 }
 // Carte « nouvelle semaine à préparer » (affichée quand la semaine n'a pas encore de contenu)
 function weekGenCard(box, w, after) {
   box.innerHTML = `<div class="card gen"><h2>Semaine ${w} : de nouvelles expressions t'attendent</h2>
-    <p>Les semaines 1 à ${BUILTIN_WEEKS} sont fournies avec l'app. À partir de la semaine ${BUILTIN_WEEKS + 1}, Claude prépare ${WEEK_SIZE} nouvelles expressions adaptées à ton travail, sans répéter celles que tu connais déjà.</p>
+    <p>La semaine 1 est fournie avec l'app. À partir de la semaine ${BUILTIN_WEEKS + 1}, Claude prépare ${WEEK_SIZE} nouvelles expressions adaptées à ton travail, sans répéter celles que tu connais déjà.</p>
     <div class="row"><button class="btn primary big" id="genBtn">✨ Préparer la semaine ${w}</button></div>
     <p class="small muted" id="genMsg"></p>
     <p class="small muted">En attendant, l'onglet <b>🔁 Réviser</b> te fait retravailler toutes les semaines précédentes.</p></div>`;
   const btn = $('#genBtn', box), msg = $('#genMsg', box);
   sampleReady.then(fn => { if (!fn) { btn.disabled = true; msg.textContent = 'La préparation des nouvelles semaines fonctionne sur la version en ligne de l’app (le lien claude.ai). Ouvre-la pour générer la semaine ' + w + '.'; } });
   btn.onclick = async () => {
-    btn.disabled = true; msg.textContent = 'Claude prépare tes expressions… (30 secondes à 1 minute)';
+    btn.disabled = true; msg.textContent = 'Claude prépare tes expressions… (1 à 2 minutes)';
     let n = 0;
     try {
-      const out = await generateWeek(w, ({ text }) => { const k = (text.match(/"en"\s*:/g) || []).length; if (k !== n) { n = k; msg.textContent = `Claude prépare tes expressions… ${k}/${WEEK_SIZE}`; } });
+      const out = await generateWeek(w, k => { if (k !== n) { n = k; msg.textContent = `Claude prépare tes expressions… ${Math.min(k, WEEK_SIZE)}/${WEEK_SIZE}`; } });
       toast(`Semaine ${w} prête : ${out.length} expressions`); after();
     } catch (e) {
       btn.disabled = false;
@@ -881,7 +889,7 @@ function viewSettings(v) {
     <div class="card"><h3>Progression</h3>
       <div class="row"><label>Date de début :</label><input type="date" id="sd" value="${st.startDate}">
       <label>Semaine :</label><select id="wo"><option value="">automatique (${currentWeek()})</option>${Array.from({ length: weekCount() }, (_, i) => `<option value="${i + 1}" ${st.weekOverride === i + 1 ? 'selected' : ''}>forcer semaine ${i + 1}</option>`).join('')}</select></div>
-      <div class="row" style="margin-top:10px"><label>Objectif quotidien :</label><select id="dg">${[10, 20, 30, 50, 80].map(n => `<option value="${n}" ${goal() === n ? 'selected' : ''}>${n} cartes / exercices par jour</option>`).join('')}</select></div>
+      <div class="row" style="margin-top:10px"><label>Objectif quotidien :</label><select id="dg">${[10, 20, 30, 40, 50, 80, 100].map(n => `<option value="${n}" ${goal() === n ? 'selected' : ''}>${n} cartes / exercices par jour</option>`).join('')}</select></div>
       <div class="row" style="margin-top:10px"><label>Longueur de séance :</label><select id="sl">${Object.keys(PLANS).map(n => { const p = PLANS[n]; const o = Object.entries(p).reduce((a, [t, k]) => a + (TYPES[t].oral ? k : 0), 0); return `<option value="${n}" ${Number(n) === st.sessionLen ? 'selected' : ''}>${n} exercices (${o} oraux)</option>`; }).join('')}</select></div>
     </div>
     <div class="card"><h3>Réponse rapide</h3>
