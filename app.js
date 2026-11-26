@@ -62,7 +62,7 @@ if (!S.daily) S.daily = {};
 
 // ---------------------------------------------------- objectif quotidien & série
 // Chaque carte, question ou exercice compte pour 1 (un dialogue réussi compte pour 3).
-const goal = () => S.settings.dailyGoal || 30;
+const goal = () => S.settings.dailyGoal || 40;
 const doneToday = () => S.daily[todayISO()] || 0;
 function streak() {
   let k = todayISO(), n = 0;
@@ -104,15 +104,17 @@ const hasWeek = w => w <= BUILTIN_WEEKS || !!(S.gen[w] && S.gen[w].length);
 
 // ---------------------------------------------------------- content prep
 // Semaines 1 à 3 : contenu intégré. Semaine 4 et suivantes : générées par Claude (version en ligne).
-const BUILTIN = EXPRESSIONS.map(e => ({ ...e, id: norm(e.en) }));
+const BUILTIN = [...EXPRESSIONS.map(e => ({ k: 'expr', ...e })), ...WORDS.map(e => ({ k: 'word', ...e }))].map(e => ({ ...e, id: norm(e.en) }));
 for (const c of Object.keys(CATS)) {
-  const list = BUILTIN.filter(e => e.c === c);
-  const per = Math.ceil(list.length / BUILTIN_WEEKS);
-  list.forEach((e, i) => (e.w = Math.floor(i / per) + 1));
+  for (const k of ['expr', 'word']) {
+    const list = BUILTIN.filter(e => e.c === c && e.k === k);
+    const per = Math.max(1, Math.ceil(list.length / BUILTIN_WEEKS));
+    list.forEach((e, i) => (e.w = Math.floor(i / per) + 1));
+  }
 }
 let EXPR = [], EXPR_BY_ID = {};
 function rebuildExpr() {
-  const gen = Object.entries(S.gen).flatMap(([w, list]) => (list || []).map(e => ({ ...e, id: norm(e.en), w: Number(w), gen: true })));
+  const gen = Object.entries(S.gen).flatMap(([w, list]) => (list || []).map(e => ({ k: 'expr', ...e, id: norm(e.en), w: Number(w), gen: true })));
   const seen = new Set(); EXPR = [];
   for (const e of [...BUILTIN, ...gen]) if (!seen.has(e.id)) { seen.add(e.id); EXPR.push(e); }
   EXPR_BY_ID = Object.fromEntries(EXPR.map(e => [e.id, e]));
@@ -224,68 +226,74 @@ async function initCloud() {
 // ------------------------------------------- génération des nouvelles semaines
 let sampleFn = null;
 const sampleReady = (async () => { try { if (window.claude && window.claude.use) sampleFn = await claude.use('sample'); } catch {} return sampleFn; })();
-const WEEK_SIZE = 100; // nouvelles expressions par semaine
-const PART = 50;       // demandées à Claude par lots de 50 (réponses plus fiables)
-function genPrompt(w, n, known) {
+const PER_KIND = 100;              // par semaine : 100 expressions + 100 mots
+const WEEK_SIZE = PER_KIND * 2;
+const PART = 50;                   // demandés à Claude par lots de 50 (réponses plus fiables)
+const KIND_LABEL = { expr: '💬 Expression', word: '🔤 Mot' };
+function genPrompt(w, n, known, kind) {
   const counts = allocate(n);
-  return `Tu prépares la semaine ${w} d'une application de cartes (type Quizlet) pour une Française qui travaille dans le marketing pharmaceutique / medtech (ophtalmologie, lancements de produits, market access). Elle travaille en anglais avec les filiales du Royaume-Uni, d'Espagne et des Pays-Bas. Son objectif : comprendre et parler spontanément en réunion (niveau B1-B2), pas l'écrit.
+  const what = kind === 'word'
+    ? `${n} NOUVEAUX MOTS ou termes clés (un mot ou un groupe nominal court, ex. « a stakeholder », « lead time », « a rebate », « to roll out » ; les verbes précédés de « to », les noms avec « a/an » quand c'est naturel), avec leur traduction française la plus utile dans son métier`
+    : `${n} NOUVELLES EXPRESSIONS utiles à l'oral (une phrase courte ou un début de phrase avec « … » si elle se complète), pour se débrouiller en réunion`;
+  return `Tu prépares la semaine ${w} d'une application de cartes (type Quizlet) pour une Française qui travaille dans le marketing pharmaceutique / medtech (ophtalmologie, lancements de produits, market access). Elle travaille en anglais avec les filiales du Royaume-Uni, d'Espagne et des Pays-Bas. Son objectif : se débrouiller à l'oral en réunion, comprendre et répondre spontanément (niveau B1-B2), pas l'écrit.
 
-Écris exactement ${n} NOUVELLES cartes : environ 40 % de MOTS ou termes clés (ex. « reimbursement », « stakeholder », « lead time », « to roll out ») et 60 % d'EXPRESSIONS utiles à l'oral, pour qu'elle se débrouille en réunion, en marketing et en market access. Répartition :
-- "general" (fluidité, expressions « béquilles » pour gagner du temps, small talk, visio) : ${counts.general}
-- "meetings" (réunions, vérifier sa compréhension, organiser, répartir les tâches) : ${counts.meetings}
-- "persuade" (argumenter, nuancer, négocier, défendre une idée face à quelqu'un de plus à l'aise) : ${counts.persuade}
-- "marketing" (se présenter, parler de son travail, de campagnes, de cibles) : ${counts.marketing}
+Écris exactement ${what}, réparties ainsi :
+- "general" (vie au travail, fluidité, small talk, visio) : ${counts.general}
+- "meetings" (réunions, organiser, répartir les tâches, vérifier sa compréhension) : ${counts.meetings}
+- "persuade" (argumenter, nuancer, négocier, défendre une idée) : ${counts.persuade}
+- "marketing" (marque, campagnes, cibles, lancement, KPI, se présenter) : ${counts.marketing}
 - "access" (market access, remboursement, prix, HTA, payeurs) : ${counts.access}
 
 Règles :
-- Anglais naturel et idiomatique, tel qu'on le dit vraiment en réunion ; une expression = une phrase courte ou un début de phrase (avec « … » si elle se complète) ; un mot = le terme seul (verbe précédé de « to »), avec sa traduction française la plus utile dans son métier.
-- Le français est une traduction naturelle (tutoiement, au féminin si la locutrice parle d'elle).
-- Progression : semaine ${w}, donc des expressions de plus en plus riches et variées.
-- N'utilise AUCUNE des expressions déjà apprises ci-dessous, ni une quasi-répétition.
-- "t" vaut "crutch" pour une expression béquille, "check" pour vérifier sa compréhension, sinon omets-le.
+- Anglais naturel, tel qu'on le dit vraiment au travail (britannique de préférence).
+- Français : traduction naturelle (tutoiement, au féminin si la locutrice parle d'elle).
+- Progression : semaine ${w}, donc de plus en plus riche et varié, tout en restant directement utile.
+- N'utilise AUCUNE des cartes déjà apprises ci-dessous, ni une quasi-répétition.
+${kind === 'expr' ? '- "t" vaut "crutch" pour une expression béquille, "check" pour vérifier sa compréhension, sinon omets-le.\n' : ''}
+Réponds uniquement avec un tableau JSON d'objets {"c": "general|meetings|persuade|marketing|access", "en": "...", "fr": "..."${kind === 'expr' ? ', "t": "crutch|check"' : ''}}.
 
-Réponds uniquement avec un tableau JSON d'objets {"c": "general|meetings|persuade|marketing|access", "en": "...", "fr": "...", "t": "crutch|check"}.
-
-Expressions déjà apprises :
-${known.slice(-700).join('\n')}`;
+Cartes déjà apprises :
+${known.slice(-800).join('\n')}`;
 }
 async function generateWeek(w, onCount) {
   if (!sampleFn) throw { code: 'unavailable' };
   const have = new Set(EXPR.map(e => e.id)), known = EXPR.map(e => e.en), out = [];
-  for (let done = 0; done < WEEK_SIZE; done += PART) {
-    const n = Math.min(PART, WEEK_SIZE - done), base = out.length;
-    let data;
-    try {
-      data = await sampleFn.json(genPrompt(w, n, known), { cache: false, onText: ({ text }) => onCount && onCount(base + (text.match(/"en"\s*:/g) || []).length) });
-    } catch (e) { if (out.length >= PART * 0.6) break; throw e; } // un lot déjà prêt : on garde ce qu'on a
-    if (!Array.isArray(data)) { if (out.length) break; throw { code: 'invalid_json' }; }
-    for (const x of data) {
-      if (!x || typeof x.en !== 'string' || typeof x.fr !== 'string' || !CATS[x.c]) continue;
-      const en = x.en.trim().slice(0, 160), fr = x.fr.trim().slice(0, 200), id = norm(en);
-      if (!id || have.has(id)) continue;
-      have.add(id); known.push(en);
-      out.push({ c: x.c, en, fr, ...(x.t === 'crutch' || x.t === 'check' ? { t: x.t } : {}) });
+  for (const kind of ['expr', 'word']) {
+    for (let done = 0; done < PER_KIND; done += PART) {
+      const n = Math.min(PART, PER_KIND - done), base = out.length;
+      let data;
+      try {
+        data = await sampleFn.json(genPrompt(w, n, known, kind), { cache: false, onText: ({ text }) => onCount && onCount(base + (text.match(/"en"\s*:/g) || []).length) });
+      } catch (e) { if (out.length >= PART * 0.6) continue; throw e; } // un lot raté : on garde les autres
+      if (!Array.isArray(data)) continue;
+      for (const x of data) {
+        if (!x || typeof x.en !== 'string' || typeof x.fr !== 'string' || !CATS[x.c]) continue;
+        const en = x.en.trim().slice(0, 160), fr = x.fr.trim().slice(0, 200), id = norm(en);
+        if (!id || have.has(id)) continue;
+        have.add(id); known.push(en);
+        out.push({ k: kind, c: x.c, en, fr, ...(kind === 'expr' && (x.t === 'crutch' || x.t === 'check') ? { t: x.t } : {}) });
+      }
     }
   }
-  if (out.length < 30) throw { code: 'too_few' };
+  if (out.length < 60) throw { code: 'too_few' };
   S.gen[w] = out; rebuildExpr(); save(); pushWeek(w);
   return out;
 }
 // Carte « nouvelle semaine à préparer » (affichée quand la semaine n'a pas encore de contenu)
 function weekGenCard(box, w, after) {
-  box.innerHTML = `<div class="card gen"><h2>Semaine ${w} : de nouvelles expressions t'attendent</h2>
-    <p>La semaine 1 est fournie avec l'app. À partir de la semaine ${BUILTIN_WEEKS + 1}, Claude prépare ${WEEK_SIZE} nouvelles expressions adaptées à ton travail, sans répéter celles que tu connais déjà.</p>
+  box.innerHTML = `<div class="card gen"><h2>Semaine ${w} : de nouvelles cartes t'attendent</h2>
+    <p>La semaine 1 est fournie avec l'app. À partir de la semaine ${BUILTIN_WEEKS + 1}, Claude prépare ${PER_KIND} nouvelles expressions et ${PER_KIND} nouveaux mots adaptés à ton travail, sans répéter celles que tu connais déjà.</p>
     <div class="row"><button class="btn primary big" id="genBtn">✨ Préparer la semaine ${w}</button></div>
     <p class="small muted" id="genMsg"></p>
     <p class="small muted">En attendant, l'onglet <b>🔁 Réviser</b> te fait retravailler toutes les semaines précédentes.</p></div>`;
   const btn = $('#genBtn', box), msg = $('#genMsg', box);
   sampleReady.then(fn => { if (!fn) { btn.hidden = true; msg.innerHTML = '📬 <b>Ta semaine ' + w + ' arrive automatiquement</b> : elle est publiée chaque mardi soir. Ouvre l’app avec internet pour la recevoir.'; } });
   btn.onclick = async () => {
-    btn.disabled = true; msg.textContent = 'Claude prépare tes expressions… (1 à 2 minutes)';
+    btn.disabled = true; msg.textContent = 'Claude prépare tes cartes… (2 à 4 minutes)';
     let n = 0;
     try {
-      const out = await generateWeek(w, k => { if (k !== n) { n = k; msg.textContent = `Claude prépare tes expressions… ${Math.min(k, WEEK_SIZE)}/${WEEK_SIZE}`; } });
-      toast(`Semaine ${w} prête : ${out.length} expressions`); after();
+      const out = await generateWeek(w, k => { if (k !== n) { n = k; msg.textContent = `Claude prépare tes cartes… ${Math.min(k, WEEK_SIZE)}/${WEEK_SIZE}`; } });
+      toast(`Semaine ${w} prête : ${out.length} cartes`); after();
     } catch (e) {
       btn.disabled = false;
       msg.textContent = ({ not_granted: 'Tu as refusé l’accès à Claude pour cette page : recharge-la et accepte pour générer la semaine.', rate_limited: 'Limite d’utilisation atteinte. Réessaie un peu plus tard.', too_few: 'La réponse était incomplète. Clique pour réessayer.', invalid_json: 'La réponse était illisible. Clique pour réessayer.', unavailable: 'Fonction disponible uniquement sur la version en ligne.' })[e && e.code] || 'La préparation a échoué. Clique pour réessayer.';
@@ -858,21 +866,23 @@ function sessionEnd(v, ses) {
 
 // ========================================================== EXPRESSIONS
 function viewExpr(v) {
-  const f = route.exprFilter || (route.exprFilter = { c: '', w: '', q: '', accent: '' });
-  v.innerHTML = `<h1>📚 Expressions</h1><p class="sub">${EXPR.length} expressions sur ${maxContentWeek()} semaines (une nouvelle semaine s'ajoute tous les 7 jours). Pastille : grise = jamais vue, jaune = en cours, verte = maîtrisée.</p>
+  const f = route.exprFilter || (route.exprFilter = { c: '', w: '', q: '', accent: '', k: '' });
+  v.innerHTML = `<h1>📚 Mots & expressions</h1><p class="sub">${EXPR.filter(e => e.k === 'expr').length} expressions et ${EXPR.filter(e => e.k === 'word').length} mots sur ${maxContentWeek()} semaine(s) (une nouvelle semaine s'ajoute tous les 7 jours). Pastille : grise = jamais vue, jaune = en cours, verte = maîtrisée.</p>
     <div class="row" style="margin-bottom:12px">
       <select id="fc"><option value="">Toutes les catégories</option>${Object.entries(CATS).map(([k, c]) => `<option value="${k}" ${f.c === k ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}<option value="crutch" ${f.c === 'crutch' ? 'selected' : ''}>🛟 Béquilles uniquement</option><option value="check" ${f.c === 'check' ? 'selected' : ''}>🔎 Vérifier sa compréhension</option></select>
+      <select id="fk"><option value="">Mots et expressions</option><option value="expr" ${f.k === 'expr' ? 'selected' : ''}>💬 Expressions</option><option value="word" ${f.k === 'word' ? 'selected' : ''}>🔤 Mots</option></select>
       <select id="fw"><option value="">Toutes les semaines</option>${Array.from({ length: weekCount() }, (_, i) => `<option value="${i + 1}" ${String(f.w) === String(i + 1) ? 'selected' : ''}>Semaine ${i + 1}</option>`).join('')}</select>
       <select id="fa"><option value="">Accent aléatoire</option>${Object.entries(ACCENTS).map(([k, a]) => `<option value="${k}" ${f.accent === k ? 'selected' : ''}>${a.flag} ${esc(a.label)}</option>`).join('')}</select>
       <input type="search" id="fq" placeholder="Rechercher…" value="${esc(f.q)}">
     </div><div class="card" id="list"></div>`;
   const draw = () => {
     const q = f.q.toLowerCase();
-    const list = EXPR.filter(e => (!f.c || e.c === f.c || e.t === f.c) && (!f.w || e.w === Number(f.w)) && (!q || (e.en + ' ' + e.fr).toLowerCase().includes(q)));
+    const list = EXPR.filter(e => (!f.k || e.k === f.k) && (!f.c || e.c === f.c || e.t === f.c) && (!f.w || e.w === Number(f.w)) && (!q || (e.en + ' ' + e.fr).toLowerCase().includes(q)));
     $('#list').innerHTML = list.length ? list.map(e => exprRow(e, f.accent).replace('<div class="fr">', `<div class="fr">S${e.w} · `)).join('') : '<p class="muted">Aucun résultat.</p>';
   };
   $('#fc').onchange = e => { f.c = e.target.value; draw(); };
   $('#fw').onchange = e => { f.w = e.target.value; draw(); };
+  $('#fk').onchange = e => { f.k = e.target.value; draw(); };
   $('#fa').onchange = e => { f.accent = e.target.value; draw(); };
   $('#fq').oninput = e => { f.q = e.target.value; draw(); };
   draw();
@@ -930,14 +940,16 @@ function deckFilterHtml(f) {
     <select data-f="c"><option value="">Toutes les catégories</option>${Object.entries(CATS).map(([k, c]) => `<option value="${k}" ${f.c === k ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}
       <option value="crutch" ${f.c === 'crutch' ? 'selected' : ''}>🛟 Béquilles</option><option value="check" ${f.c === 'check' ? 'selected' : ''}>🔎 Vérifier sa compréhension</option><option value="review" ${f.c === 'review' ? 'selected' : ''}>✗ Mes cartes à revoir</option></select>
     <select data-f="w"><option value="">Toutes les semaines</option>${Array.from({ length: weekCount() }, (_, i) => `<option value="${i + 1}" ${String(f.w) === String(i + 1) ? 'selected' : ''}>Semaine ${i + 1}${i + 1 === currentWeek() ? ' (en cours)' : ''}</option>`).join('')}</select>
+    <div class="seg" data-f="k">${[['', 'Tout'], ['expr', '💬 Expressions'], ['word', '🔤 Mots']].map(([k, l]) => `<button data-v="${k}" class="${(f.k || '') === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     <div class="seg" data-f="dir">${[['fr-en', 'FR → EN'], ['en-fr', 'EN → FR'], ['mix', 'Mélangé']].map(([k, l]) => `<button data-v="${k}" class="${f.dir === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
 }
 function bindDeckFilter(v, f, redraw) {
   $$('select[data-f]', v).forEach(s => (s.onchange = () => { f[s.dataset.f] = s.value; redraw(); }));
   $$('[data-f="dir"] button', v).forEach(b => (b.onclick = () => { f.dir = b.dataset.v; S.settings.cardDir = f.dir; save(); redraw(); }));
+  $$('[data-f="k"] button', v).forEach(b => (b.onclick = () => { f.k = b.dataset.v; redraw(); }));
 }
 function deckList(f) {
-  return EXPR.filter(e => (!f.w || e.w === Number(f.w)) && (!f.c || (f.c === 'review' ? (exprStat(e.id).ko > 0 && mastery(e.id) < 2) : (e.c === f.c || e.t === f.c))));
+  return EXPR.filter(e => (!f.k || e.k === f.k) && (!f.w || e.w === Number(f.w)) && (!f.c || (f.c === 'review' ? (exprStat(e.id).ko > 0 && mastery(e.id) < 2) : (e.c === f.c || e.t === f.c))));
 }
 const cardFilter = () => route.cardFilter || (route.cardFilter = { c: '', w: String(currentWeek()), dir: S.settings.cardDir || 'fr-en' });
 
@@ -972,7 +984,7 @@ function startDeck(box, cards, f) {
       <div class="deckbar"><span>${i + 1} / ${cards.length}</span><div class="progress" style="flex:1;margin:0"><i style="width:${i / cards.length * 100}%"></i></div>
         <span class="cnt ko">✗ ${again.length}</span><span class="cnt ok">✓ ${known.length}</span></div>
       <div class="fc-wrap"><div class="fc" id="fc">
-        <div class="face front"><span class="lang">${d === 'fr-en' ? 'FR' : 'EN'}</span><div class="fc-text">${esc(front)}</div><span class="hint">Clique ou Espace pour retourner</span></div>
+        <div class="face front"><span class="lang">${d === 'fr-en' ? 'FR' : 'EN'}</span><span class="kind">${KIND_LABEL[e.k] || ''}</span><div class="fc-text">${esc(front)}</div><span class="hint">Clique ou Espace pour retourner</span></div>
         <div class="face back"><span class="lang">${d === 'fr-en' ? 'EN' : 'FR'}</span><div class="fc-text">${esc(back)}</div><div class="fc-sub">${esc(front)}</div>
           <button class="icon say" title="Écouter en anglais">🔊</button></div>
       </div></div>

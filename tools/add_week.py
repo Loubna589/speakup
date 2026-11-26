@@ -5,7 +5,7 @@ Usage :
     python tools/add_week.py existing           -> affiche toutes les expressions anglaises déjà dans l'app
     python tools/add_week.py add brouillon.json -> vérifie le brouillon et l'ajoute comme semaine suivante
 
-Le brouillon est un tableau JSON d'objets {"c", "en", "fr", "t"?}.
+Le brouillon est un tableau JSON d'objets {"k": "expr"|"word", "c", "en", "fr", "t"?} : 100 expressions + 100 mots.
 Le script refuse les doublons, les catégories inconnues et un total trop faible,
 puis écrit weeks/week-N.json, met à jour weeks/index.json et la version du cache (sw.js).
 """
@@ -15,7 +15,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEEKS = os.path.join(ROOT, 'weeks')
 CATS = {'general': 35, 'meetings': 30, 'persuade': 15, 'marketing': 10, 'access': 10}
 BUILTIN_WEEKS = 1
-MIN_ITEMS = 90
+MIN_PER_KIND = 85  # sur 100 demandés par type
 
 
 def norm(s):
@@ -31,7 +31,7 @@ def load_index():
 
 def existing():
     data = open(os.path.join(ROOT, 'data.js'), encoding='utf-8').read()
-    block = data[data.index('const EXPRESSIONS'):data.index('const ACCENTS')]
+    block = data[data.index('const EXPRESSIONS'):data.index('const ACCENTS')]  # expressions + mots
     out = re.findall(r'en: "(.*?)"', block)
     for w in load_index()['weeks']:
         out += [x['en'] for x in json.load(open(os.path.join(WEEKS, f'week-{w}.json'), encoding='utf-8'))['items']]
@@ -49,20 +49,21 @@ def add(path):
     seen = {norm(e) for e in existing()}
     keep, rejected = [], []
     for x in items:
-        if not isinstance(x, dict) or x.get('c') not in CATS or not str(x.get('en', '')).strip() or not str(x.get('fr', '')).strip():
+        if not isinstance(x, dict) or x.get('k') not in ('expr', 'word') or x.get('c') not in CATS or not str(x.get('en', '')).strip() or not str(x.get('fr', '')).strip():
             rejected.append((x, 'format')); continue
         k = norm(x['en'])
         if not k or k in seen:
             rejected.append((x.get('en'), 'doublon')); continue
         seen.add(k)
-        item = {'c': x['c'], 'en': x['en'].strip(), 'fr': x['fr'].strip()}
+        item = {'k': x['k'], 'c': x['c'], 'en': x['en'].strip(), 'fr': x['fr'].strip()}
         if x.get('t') in ('crutch', 'check'):
             item['t'] = x['t']
         keep.append(item)
     for r in rejected:
         print('rejeté :', r)
-    if len(keep) < MIN_ITEMS:
-        sys.exit(f'ÉCHEC : seulement {len(keep)} expressions valides (minimum {MIN_ITEMS}). Complète le brouillon et relance.')
+    per_kind = {k: sum(1 for i in keep if i['k'] == k) for k in ('expr', 'word')}
+    if min(per_kind.values()) < MIN_PER_KIND:
+        sys.exit(f'ÉCHEC : {per_kind} cartes valides (minimum {MIN_PER_KIND} expressions ET {MIN_PER_KIND} mots). Complète le brouillon et relance.')
     w = next_week()
     os.makedirs(WEEKS, exist_ok=True)
     json.dump({'week': w, 'created': datetime.date.today().isoformat(), 'items': keep},
@@ -74,7 +75,7 @@ def add(path):
     txt = re.sub(r"const VERSION = '[^']*';", f"const VERSION = 'speakup-week-{w}';", txt)
     open(sw, 'w', encoding='utf-8').write(txt)
     counts = {c: sum(1 for i in keep if i['c'] == c) for c in CATS}
-    print(f'OK : semaine {w} ajoutée avec {len(keep)} expressions {counts}')
+    print(f'OK : semaine {w} ajoutée avec {len(keep)} cartes {per_kind} {counts}')
 
 
 if __name__ == '__main__':

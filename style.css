@@ -155,3 +155,4 @@ td, th { text-align: left; padding: 7px 6px; border-top: 1px solid var(--line); 
 .chart .goal-line { position: absolute; left: 0; right: 0; bottom: calc(24px + (100% - 50px) * var(--g)); border-top: 2px dashed var(--warn); pointer-events: none; }
 .chart .goal-line span { position: absolute; right: 0; top: -18px; font-size: 11px; color: var(--warn); background: var(--card); padding: 0 4px; }
 .badge[hidden] { display: none; }
+.face .kind { position: absolute; top: 12px; right: 16px; font-size: 12px; font-weight: 600; color: var(--muted); }
